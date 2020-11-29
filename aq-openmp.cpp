@@ -79,28 +79,39 @@ double AdaptiveQuadrature(double lower, double upper, double error, int func){
         double midpoint = (upper + lower) / 2;
         #pragma omp taskq
         {
-            #pragma omp task
+            #pragma omp task shared(left_area) firstprivate(lower, midpoint, error, func)
             {
                 left_area = AdaptiveQuadrature(lower, midpoint, error, func);
             }
-            #pragma omp task 
+            #pragma omp task shared(right_area) firstprivate(lower, midpoint, error, func)
             {
                 right_area = AdaptiveQuadrature(midpoint, upper, error, func);
             }
+            #pragma omp taskwait
         }
         integral_result = left_area + right_area;
     }
-    else{
+    else {
+        #pragma omp critical
         integral_result = simpsons;
     }
-
-    cout << integral_result << endl;
     return integral_result;
 }
 
 int main()
 {
     double approxf1, approxf2, approxf3, actualf1, actualf2, actualf3, error1, error2, error3;
+    #pragma omp parallel 
+    {
+        #pragma omp taskq lastprivate(approxf1)
+        {
+            #pragma omp task
+            {
+                approxf1 = AdaptiveQuadrature(0, 10, 0.02, 1);
+            }
+        }
+    }
+
     #pragma omp parallel 
     {
         #pragma omp taskq lastprivate(approxf2)
@@ -111,26 +122,35 @@ int main()
             }
         }
     }
-    //approxf2 = AdaptiveQuadrature(1, 8, 0.02, 2);
-    //approxf3 = AdaptiveQuadrature(0, 10, 0.02, 3);
+    
+    #pragma omp parallel 
+    {
+        #pragma omp taskq lastprivate(approxf3)
+        {
+            #pragma omp task
+            {
+                approxf3 = AdaptiveQuadrature(0, 10, 0.02, 3);
+            }
+        }
+    }
 
+    actualf1 = integralF1(0, 10);
     actualf2 = integralF2(1, 8);
-    //actualf2 = integralF2(1, 8);
-    //actualf3 = integralF3(0, 10);
+    actualf3 = integralF3(0, 10);
 
+    error1 = getError(actualf1, approxf1);
     error2 = getError(actualf2, approxf2);
-    //error2 = getError(actualf2, approxf2);
-    //error3 = getError(actualf3, approxf3);
+    error3 = getError(actualf3, approxf3);
 
-    /*cout << "Approximate integral of f(x) = 4x^6 - 2x^3 + 7x - 4 from 0 to 10: " << approxf1 << endl;
+    cout << "Approximate integral of f(x) = 4x^6 - 2x^3 + 7x - 4 from 0 to 10: " << approxf1 << endl;
     cout << "Actual integral of f(x) = 4x^6 - 2x^3 + 7x - 4 from 0 to 10: " << actualf1 << endl;
-    cout << "Error: " << error1 << "\n\n";*/
+    cout << "Error: " << error1 << "\n\n";
     cout << "Approximated f(x) = cos(x) - 3x^-5 from 1 to 8: " << approxf2 << endl;
     cout << "Actual f(x) = cos(x) - 3x^-5 from 1 to 8: " << actualf2 << endl;
     cout << "Error: " << error2 << "\n\n";
-    /*cout << "Approximated f(x) = e^x + 1 / (x^2 + 1) from 0 to 10: " << approxf3 << endl;
+    cout << "Approximated f(x) = e^x + 1 / (x^2 + 1) from 0 to 10: " << approxf3 << endl;
     cout << "Actual f(x) = e^x + 1 / (x^2 + 1) from 0 to 10: " << actualf3 << endl;
-    cout << "Error: " << error3 << "\n\n";*/
+    cout << "Error: " << error3 << "\n\n";
 
     return 0;
 }
