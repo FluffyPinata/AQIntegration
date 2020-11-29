@@ -4,6 +4,9 @@
 #include <cmath>
 #include <omp.h>
 #include <stack>
+#include <time.h>
+#include <cstdlib>
+#include <iomanip>
 
 using namespace std;
 
@@ -100,7 +103,9 @@ double AdaptiveQuadrature(double lower, double upper, double error, int func){
 
 int main()
 {
-    double approxf1, approxf2, approxf3, actualf1, actualf2, actualf3, error1, error2, error3;
+    double approxf1, approxf2, approxf3, actualf1, actualf2, actualf3, error1, error2, error3, runtime;
+
+    runtime = omp_get_wtime();
     #pragma omp parallel 
     {
         #pragma omp taskq lastprivate(approxf1)
@@ -142,6 +147,8 @@ int main()
     error2 = getError(actualf2, approxf2);
     error3 = getError(actualf3, approxf3);
 
+    runtime = omp_get_wtime() - runtime;
+
     cout << "Approximate integral of f(x) = 4x^6 - 2x^3 + 7x - 4 from 0 to 10: " << approxf1 << endl;
     cout << "Actual integral of f(x) = 4x^6 - 2x^3 + 7x - 4 from 0 to 10: " << actualf1 << endl;
     cout << "Error: " << error1 << "\n\n";
@@ -151,6 +158,7 @@ int main()
     cout << "Approximated f(x) = e^x + 1 / (x^2 + 1) from 0 to 10: " << approxf3 << endl;
     cout << "Actual f(x) = e^x + 1 / (x^2 + 1) from 0 to 10: " << actualf3 << endl;
     cout << "Error: " << error3 << "\n\n";
+    cout << "Program runs in " << setiosflags(ios::fixed) << setprecision(8) << runtime << " seconds\n";
 
     return 0;
 }
