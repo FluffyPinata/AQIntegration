@@ -70,15 +70,63 @@ double getError(double val1, double val2){
     return (abs((val1 - val2) / val1));
 }
 
-float master(double lower, double upper, double error, int func, int numtasks, int taskid) {
+void receiveResults(MPI_Status received_status, stack< vector<double> > &tasks, double &integral_result, double bounds[5]) {
+	if (received_status.MPI_TAG == 1) { //flag for pushing back to stack
+        //Received flag to split into two processes
+        vector<double> tempLeftVec(bounds, bounds + 5);
+        tasks.push(tempLeftVec);
+        //Assumes that if it gets one bound another is also coming
+        MPI_Recv(bounds, 5, MPI_DOUBLE, received_status.MPI_SOURCE, received_status.MPI_TAG, MPI_COMM_WORLD, &received_status);
+        vector<double> tempRightVec(bounds, bounds + 5);
+        tasks.push(tempRightVec);
+    } else if (received_status.MPI_TAG == 2) { //flag for adding to result
+        //Received result, now add it to total
+        integral_result += bounds[4];
+    }
+}
+ 
+bool tasksStillRunning(int numtasks, vector<bool> tasksAvailable) {
+	for (int i = 0; i < numtasks - 1; i++) {
+        if (tasksAvailable[i] == false) {
+            return true;
+        }
+    }
+    return false;
+}
+
+vector<bool> assignWork(double bounds[5], int numtasks, vector<bool> tasksAvailable, stack< vector<double> > &tasks) {
+	vector<double> tempVec;
+	for (int i = 0; i < numtasks - 1; i++) {
+        //if still work to assign and task is available, loop through tasks to find 
+        if (!tasks.empty() && tasksAvailable[i] == true) {
+            tempVec = tasks.top();
+            tasks.pop();
+            bounds[0] = tempVec[0];
+            bounds[1] = tempVec[1];
+            bounds[2] = tempVec[2];
+            bounds[3] = tempVec[3];
+            bounds[4] = 0; //This should always be 0 if it gets here but just in case
+            MPI_Send(bounds, 5, MPI_DOUBLE, i + 1, 0, MPI_COMM_WORLD);
+            tasksAvailable[i] = false;
+        }
+    }
+    return tasksAvailable;
+}
+
+void cancelWorkers(double bounds[5], int numtasks) {
+    for (int i = 0; i < numtasks - 1; i++) {
+        MPI_Send(bounds, 5, MPI_DOUBLE, i + 1, 5, MPI_COMM_WORLD);
+    }  
+}
+
+double master(double lower, double upper, double error, int func, int numtasks, int taskid) {
     double bounds[5] = {lower, upper, error, func, 0}; //Last is where result is stored
-    // idk how to send vector into mpi so just convert between array/vector as needed
     vector<double> tempVec(bounds, bounds + 5);
     double integral_result = 0;
     //can't stick an array on a stack so this is the next best option
     stack< vector<double> > tasks;
     //Stores current availability of each task
-    bool tasksAvailable[numtasks - 1];
+    vector<bool> tasksAvailable(numtasks - 1);
     //Checks if program is still running even if stack is empty
     bool tasksRunning = false;
     tasks.push(tempVec);
@@ -87,54 +135,38 @@ float master(double lower, double upper, double error, int func, int numtasks, i
 
     //either stuffs still in the stack to be assigned or tasks aren't done with what they're working on
     while (!tasks.empty() || tasksRunning) {
+    	//grab anything that comes in
         MPI_Recv(bounds, 5, MPI_DOUBLE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
         tasksAvailable[status.MPI_SOURCE - 1] = true; //Set received task as being done
-
-        if (status.MPI_TAG == 1) { //flag for pushing back to stack
-            //Received flag to split into two processes
-            vector<double> tempLeftVec(bounds, bounds + 5);
-            tasks.push(tempLeftVec);
-            MPI_Recv(bounds, 5, MPI_DOUBLE, status.MPI_SOURCE, status.MPI_TAG, MPI_COMM_WORLD, &status);
-            vector<double> tempRightVec(bounds, bounds + 5);
-            tasks.push(tempRightVec);
-        } else if (status.MPI_TAG == 2) { //flag for adding to result
-            //Received result, now add it to total
-            integral_result += bounds[4];
-        }
-
-        for (int i = 0; i < numtasks - 1; i++) {
-            //if still work to assign and task is available, loop through tasks to find 
-            if (!tasks.empty() && tasksAvailable[i] == true) {
-                tempVec = tasks.top();
-                tasks.pop();
-                bounds[0] = tempVec[0];
-                bounds[1] = tempVec[1];
-                bounds[2] = tempVec[2];
-                bounds[3] = tempVec[3];
-                bounds[4] = 0; //This should always be 0 if it gets here but just in case
-                MPI_Send(bounds, 5, MPI_DOUBLE, i + 1, 0, MPI_COMM_WORLD);
-                tasksAvailable[i] = false;
-            }
-        }
-
+        receiveResults(status, tasks, integral_result, bounds);
+        tasksAvailable = assignWork(bounds, numtasks, tasksAvailable, tasks);
         //Catching if there are still left over tasks after stack is cleared. basically to stop any premature cancellation
-        tasksRunning = false;
-        for (int i = 0; i < numtasks - 1; i++) {
-            if (tasksAvailable[i] == false) {
-                tasksRunning = true;
-            }
-        }
+        tasksRunning = tasksStillRunning(numtasks, tasksAvailable);
     }
-    //Send message to cancel all slave tasks
-    for (int i = 0; i < numtasks - 1; i++) {
-        MPI_Send(bounds, 5, MPI_DOUBLE, i + 1, 5, MPI_COMM_WORLD);
-    }   
+    cancelWorkers(bounds, numtasks);
 
     return integral_result;
-
 }
 
-void slave(int taskid) {
+void sendToMaster(bool gotResult, double lower, double upper, double simpsons, double bounds[5]) {
+	//Spawn two new tasks and send to be requeued in stack
+    if (!gotResult) { // 1 is flag for needs to be pushed to stack
+        double midpoint = (upper + lower) / 2;
+        bounds[0] = lower;
+        bounds[1] = midpoint;
+        MPI_Send(bounds, 5, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD);
+        bounds[0] = midpoint;
+        bounds[1] = upper;
+        MPI_Send(bounds, 5, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD);
+    }
+    //Send result back to master
+    else { // 2 is flag for got a result
+        bounds[4] = simpsons;
+        MPI_Send(bounds, 5, MPI_DOUBLE, 0, 2, MPI_COMM_WORLD);
+    }
+}
+
+void worker(int taskid) {
     double bounds[5] = {0, 0, 0, 0, 0};
     double lower, upper, error, func, simpsons, actual;
 
@@ -165,20 +197,13 @@ void slave(int taskid) {
                 actual = integralF3(lower, upper);
             }
 
-            //Spawn two new tasks and send to be requeued in stack
-            if (getError(actual, simpsons) > error) { // 1 is flag for needs to be pushed to stack
-                double midpoint = (upper + lower) / 2;
-                bounds[0] = lower;
-                bounds[1] = midpoint;
-                MPI_Send(bounds, 5, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD);
-                bounds[0] = midpoint;
-                bounds[1] = upper;
-                MPI_Send(bounds, 5, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD);
+            //Spawn two new tasks and send to be requeued in stack if error wasn't acceptable
+            if (getError(actual, simpsons) > error) {
+                sendToMaster(false, lower, upper, simpsons, bounds);
             }
             //Send result back to master
-            else { // 2 is flag for got a result
-                bounds[4] = simpsons;
-                MPI_Send(bounds, 5, MPI_DOUBLE, 0, 2, MPI_COMM_WORLD);
+            else {
+                sendToMaster(true, lower, upper, simpsons, bounds);
             }
         }
     }
@@ -209,8 +234,8 @@ int main (int argc, char *argv[])
         //approxf2 = master(1, 8, 0.02, 2, numtasks, taskid);
         //approxf3 = master(0, 10, 0.02, 3, numtasks, taskid);
     } else {
-        //All others are slaves
-        slave(taskid);
+        //All others are workers
+        worker(taskid);
     }
 
     MPI_Comm_rank(MPI_COMM_WORLD,&taskid);
@@ -222,8 +247,8 @@ int main (int argc, char *argv[])
         approxf2 = master(1, 8, 0.02, 2, numtasks, taskid);
         //approxf3 = master(0, 10, 0.02, 3, numtasks, taskid);
     } else {
-        //All others are slaves
-        slave(taskid);
+        //All others are workers
+        worker(taskid);
     }
 
     MPI_Comm_rank(MPI_COMM_WORLD,&taskid);
@@ -235,8 +260,8 @@ int main (int argc, char *argv[])
         //approxf2 = master(1, 8, 0.02, 2, numtasks, taskid);
         approxf3 = master(0, 10, 0.02, 3, numtasks, taskid);
     } else {
-        //All others are slaves
-        slave(taskid);
+        //All others are workers
+        worker(taskid);
     }
 
     if (taskid == 0) {
