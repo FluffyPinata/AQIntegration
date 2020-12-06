@@ -19,7 +19,7 @@
 ## SBATCH --mail-type=ALL          ### email alert at start, end and abortion of execution
 ## SBATCH --mail-user=myemail ### send mail to this address (
 ## Run the code
-mpirun -print-rank-map ./mm-mpi "$@"
+mpirun -print-rank-map ./aq-mpi "$@"
 ### Display some diagnostic information
 echo '=====================JOB DIAGNOTICS========================'
 date

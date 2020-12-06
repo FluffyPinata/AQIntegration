@@ -24,7 +24,7 @@ export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 echo -n 'cpus per task : '; echo $SLURM_CPUS_PER_TASK
 echo -n 'omp num threads : ';  echo $OMP_NUM_THREADS
 ## slurm will decide which node the code will run according to the partition ste in the job. No need ssh node on heracles
-./mm-omp "$@"
+./aq-omp "$@"
 ## the script receives the matrix size from keyboard
 ## execute this script like that
 ## sbatch openmp_slurm.sh size  ###   size is an integer number for the matrix size
